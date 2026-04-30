@@ -1235,7 +1235,7 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
         </div>
         <div class="card-actions">
           <button class="btn btn-ghost btn-sm" onclick="markAll()">تحديد الجميع حاضر</button>
-          <button class="btn btn-green btn-sm" onclick="submitAtt()">حفظ الحضور</button>
+          <button class="btn btn-green btn-sm" onclick="submitAtt()">حفظ التحضير</button>
         </div>
       </div>
       <div id="emp-wrap"><div class="empty-state"><div class="spin-lg"></div></div></div>
@@ -1527,6 +1527,7 @@ function sw(tabId){
   document.querySelectorAll(".pane").forEach(p=>p.classList.remove("active"));
   document.querySelector(`[data-tab="${tabId}"]`).classList.add("active");
   document.getElementById(tabId).classList.add("active");
+  if(tabId==="t-att")    loadAttTab();
   if(tabId==="t-rec")    loadRec();
   if(tabId==="t-dash")   loadDash();
   if(tabId==="t-mgmt")   loadMgmt();
@@ -1534,16 +1535,29 @@ function sw(tabId){
 }
 
 // ── تسجيل الحضور ──
+function attKey(rec){ return (rec.empId && String(rec.empId).trim()) || rec.name || ""; }
+
 async function loadAttTab(){
   const {username,role}=S.user;
   document.getElementById("subb-wrap").style.display="none";
   document.getElementById("att-card").style.display="block";
   document.getElementById("emp-wrap").innerHTML=`<div class="empty-state"><div class="spin-lg"></div></div>`;
-  const chk=await db.collection("attendance").where("supervisor","==",username).where("date","==",today()).get();
-  if(!chk.empty){ document.getElementById("subb-wrap").style.display="flex"; document.getElementById("att-card").style.display="none"; return; }
   const q=role==="admin"?db.collection("employees"):db.collection("employees").where("supervisor","==",username);
-  const snap=await q.get();
-  S.emps=snap.docs.map(d=>({id:d.id,...d.data()}));
+  const [empsSnap, attSnap] = await Promise.all([
+    q.get(),
+    db.collection("attendance").where("supervisor","==",username).where("date","==",today()).get()
+  ]);
+  const existingMap = {};
+  attSnap.docs.forEach(d => {
+    const data = d.data();
+    existingMap[attKey(data)] = { docId: d.id, status: data.status, reason: data.reason || "" };
+  });
+  S.emps = empsSnap.docs.map(d => {
+    const e = { id: d.id, ...d.data() };
+    const ex = existingMap[attKey(e)];
+    if(ex) { e.existingDocId = ex.docId; e.existingStatus = ex.status; e.existingReason = ex.reason; }
+    return e;
+  });
   renderEmps(S.emps);
 }
 
@@ -1554,7 +1568,11 @@ function renderEmps(list){
     wrap.innerHTML=`<div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div><div class="empty-state-title">لا يوجد موظفون مُسندون لحسابك</div></div>`;
     return;
   }
+  const cls={حاضر:"present",غائب:"absent",متأخر:"late",مستأذن:"excuse"};
+  const recordedCount=list.filter(e=>e.existingDocId).length;
+  const newCount=list.length-recordedCount;
   wrap.innerHTML=`
+    ${recordedCount?`<div style="margin-bottom:14px;padding:10px 14px;background:var(--green-bg);border:1px solid rgba(21,128,61,.2);border-radius:var(--radius-sm);font-size:12.5px;color:var(--green);font-weight:600;display:flex;align-items:center;gap:8px"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px rgba(21,128,61,.5)"></span>تم تسجيل ${recordedCount} موظف اليوم${newCount?` · ${newCount} لم يُسجّل بعد`:""} — يمكنك التعديل وحفظ التغييرات</div>`:""}
     <div class="table-wrap"><table>
       <thead><tr>
         <th style="width:40px">#</th>
@@ -1564,26 +1582,35 @@ function renderEmps(list){
         <th>الحالة</th>
         <th>سبب الاستئذان</th>
       </tr></thead>
-      <tbody>${list.map((e,i)=>`
+      <tbody>${list.map((e,i)=>{
+        const cur=e.existingStatus||"حاضر";
+        const cc=cls[cur]||"present";
+        const isEx=cur==="مستأذن";
+        const recorded=!!e.existingDocId;
+        return `
         <tr>
           <td><span class="row-num">${i+1}</span></td>
-          <td><div class="td-name">${esc(e.name)}</div><div class="td-meta">رقم الموظف: ${esc(e.empId||"–")}</div></td>
+          <td>
+            <div class="td-name">${esc(e.name)}${recorded?'<span style="display:inline-block;margin-right:7px;padding:2px 8px;background:var(--green-bg);color:var(--green);border:1px solid rgba(21,128,61,.22);border-radius:999px;font-size:9.5px;font-weight:700;vertical-align:middle">مسجّل</span>':''}</div>
+            <div class="td-meta">رقم الموظف: ${esc(e.empId||"–")}</div>
+          </td>
           ${isA?`<td><span class="tag tag-blue">${esc(e.supervisor)}</span></td>`:""}
           <td><span class="tag tag-purple">${esc(e.dept||"–")}</span></td>
           <td>
-            <select class="status-sel present" id="sl-${i}" data-i="${i}" onchange="onSel(this)">
-              <option value="حاضر">حاضر</option>
-              <option value="غائب">غائب</option>
-              <option value="متأخر">متأخر</option>
-              <option value="مستأذن">مستأذن</option>
+            <select class="status-sel ${cc}" id="sl-${i}" data-i="${i}" onchange="onSel(this)">
+              <option value="حاضر" ${cur==="حاضر"?"selected":""}>حاضر</option>
+              <option value="غائب" ${cur==="غائب"?"selected":""}>غائب</option>
+              <option value="متأخر" ${cur==="متأخر"?"selected":""}>متأخر</option>
+              <option value="مستأذن" ${cur==="مستأذن"?"selected":""}>مستأذن</option>
             </select>
           </td>
           <td>
-            <div class="excuse-row" id="ex-${i}">
-              <input class="excuse-input" type="text" id="exv-${i}" placeholder="أدخل سبب الاستئذان"/>
+            <div class="excuse-row${isEx?" show":""}" id="ex-${i}">
+              <input class="excuse-input" type="text" id="exv-${i}" placeholder="أدخل سبب الاستئذان" value="${esc(e.existingReason||'')}"/>
             </div>
           </td>
-        </tr>`).join("")}
+        </tr>`;
+      }).join("")}
       </tbody>
     </table></div>
     <div class="row-count">إجمالي الموظفين: ${list.length}</div>`;
@@ -1608,16 +1635,26 @@ async function submitAtt(){
   const {username,name}=S.user;
   try {
     const batch=db.batch();
+    let added=0, updated=0;
     S.emps.forEach((e,i)=>{
       const status=document.getElementById(`sl-${i}`)?.value||"حاضر";
       const reason=status==="مستأذن"?(document.getElementById(`exv-${i}`)?.value.trim()||""):"";
-      batch.set(db.collection("attendance").doc(),{empId:e.empId||e.id,name:e.name,dept:e.dept||"",date:today(),dateTime:nowStr(),status,reason,supervisor:username,supName:name});
+      const data={empId:e.empId||e.id,name:e.name,dept:e.dept||"",date:today(),dateTime:nowStr(),status,reason,supervisor:username,supName:name};
+      if(e.existingDocId){
+        batch.update(db.collection("attendance").doc(e.existingDocId), data);
+        updated++;
+      } else {
+        batch.set(db.collection("attendance").doc(), data);
+        added++;
+      }
     });
     await batch.commit();
     hideOv();
-    toast("success",`تم حفظ حضور ${S.emps.length} موظف بنجاح`);
-    document.getElementById("subb-wrap").style.display="flex";
-    document.getElementById("att-card").style.display="none";
+    const parts=[];
+    if(added) parts.push(`${added} جديد`);
+    if(updated) parts.push(`${updated} محدّث`);
+    toast("success",`تم حفظ الحضور (${parts.join(" · ")})`);
+    await loadAttTab();
   } catch(e){ hideOv(); toast("error","فشل الحفظ: "+e.message); }
 }
 
