@@ -1404,11 +1404,34 @@ const db = firebase.firestore();
 const S = { user:null, emps:[], recs:[], sups:[], allEmps:[], depts:[] };
 let editSupDocId=null, editEmpDocId=null, editDeptDocId=null;
 
+const SESSION_KEY = "byan_session_v1";
+
+function saveSession(){
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(S.user)); } catch(e){}
+}
+function clearSession(){
+  try { sessionStorage.removeItem(SESSION_KEY); } catch(e){}
+}
+function restoreSession(){
+  try {
+    const stored = sessionStorage.getItem(SESSION_KEY);
+    if(!stored) return false;
+    const u = JSON.parse(stored);
+    if(!u || !u.username) return false;
+    S.user = u;
+    return true;
+  } catch(e){ return false; }
+}
+
 window.addEventListener("load", () => {
   setTimeout(() => {
     document.getElementById("splash").classList.add("hide");
-    showPage("login-page");
-    document.getElementById("iu").focus();
+    if(restoreSession()){
+      initApp();
+    } else {
+      showPage("login-page");
+      document.getElementById("iu").focus();
+    }
   }, 1400);
   document.getElementById("ip").addEventListener("keydown", e => { if(e.key==="Enter") doLogin(); });
   document.getElementById("iu").addEventListener("keydown", e => { if(e.key==="Enter") document.getElementById("ip").focus(); });
@@ -1466,7 +1489,7 @@ async function doLogin(){
     if(snap.empty){ showErr("اسم المستخدم غير موجود"); reset(); return; }
     const data=snap.docs[0].data();
     if(data.password!==p){ showErr("كلمة المرور غير صحيحة"); reset(); return; }
-    S.user={...data,docId:snap.docs[0].id}; reset(); initApp();
+    S.user={...data,docId:snap.docs[0].id}; saveSession(); reset(); initApp();
   } catch(e){ showErr("تعذر الاتصال بالخادم: "+e.message); reset(); }
   function showErr(m){ err.textContent=m; err.style.display="block"; }
   function reset(){ btn.disabled=false; btn.innerHTML="دخول"; }
@@ -1491,6 +1514,7 @@ function initApp(){
 }
 
 function doLogout(){
+  clearSession();
   S.user=null; S.emps=[]; S.recs=[]; S.sups=[]; S.allEmps=[]; S.depts=[];
   document.getElementById("iu").value=""; document.getElementById("ip").value="";
   document.querySelectorAll(".ao").forEach(el=>el.style.display="none");
@@ -1813,7 +1837,9 @@ async function saveSupervisor(){
   showOv("جارٍ الحفظ");
   try {
     editSupDocId ? await db.collection("supervisors").doc(editSupDocId).update({name,username,password,role,dept}) : await db.collection("supervisors").add({name,username,password,role,dept});
-    hideOv(); closeModal("modal-sup"); toast("success","تم حفظ بيانات المشرف"); loadSupsTable();
+    hideOv(); closeModal("modal-sup"); toast("success","تم حفظ بيانات المشرف");
+    await loadSupsTable();
+    await loadEmpsTable();
   } catch(e){ hideOv(); toast("error","فشل الحفظ: "+e.message); }
 }
 async function delSup(docId){
@@ -1890,7 +1916,9 @@ async function saveEmployee(){
   showOv("جارٍ الحفظ");
   try {
     editEmpDocId ? await db.collection("employees").doc(editEmpDocId).update({name,empId,supervisor,dept}) : await db.collection("employees").add({name,empId,supervisor,dept});
-    hideOv(); closeModal("modal-emp"); toast("success","تم حفظ بيانات الموظف"); loadEmpsTable();
+    hideOv(); closeModal("modal-emp"); toast("success","تم حفظ بيانات الموظف");
+    S.emps=[];
+    await loadEmpsTable();
   } catch(e){ hideOv(); toast("error","فشل الحفظ: "+e.message); }
 }
 async function delEmp(docId){
@@ -1952,12 +1980,16 @@ async function saveMyEmp(){
       await db.collection("employees").add({name,empId,dept,supervisor});
       toast("success","تم إضافة الموظف بنجاح");
     }
-    hideOv(); closeModal("modal-myemp"); loadMyEmps();
+    hideOv(); closeModal("modal-myemp");
+    S.emps=[];
+    await loadMyEmps();
   } catch(e){ hideOv(); toast("error","فشل الحفظ: "+e.message); }
 }
 async function delMyEmp(docId){
   closeCfm(); showOv("جارٍ الحذف");
   await db.collection("employees").doc(docId).delete();
-  hideOv(); toast("success","تم حذف الموظف"); loadMyEmps();
+  hideOv(); toast("success","تم حذف الموظف");
+  S.emps=[];
+  await loadMyEmps();
 }
 </script>
