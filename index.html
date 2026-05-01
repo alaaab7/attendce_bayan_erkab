@@ -1394,18 +1394,6 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
   <!-- تبويب إدارة النظام -->
   <div class="pane" id="t-mgmt">
 
-    <!-- المدراء -->
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <div class="card-title"><span class="card-title-bar"></span>المدراء</div>
-          <div class="card-subtitle" id="dir-cnt">–</div>
-        </div>
-        <button class="btn btn-blue btn-sm" onclick="openAddDir()">إضافة مدير</button>
-      </div>
-      <div id="dir-wrap"><div class="empty-state"><div class="spin-lg"></div></div></div>
-    </div>
-
     <!-- الأقسام -->
     <div class="card">
       <div class="card-header">
@@ -1416,6 +1404,18 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
         <button class="btn btn-teal btn-sm" onclick="openAddDept()">إضافة قسم</button>
       </div>
       <div id="dept-wrap"><div class="empty-state"><div class="spin-lg"></div></div></div>
+    </div>
+
+    <!-- المدراء -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title"><span class="card-title-bar"></span>المدراء</div>
+          <div class="card-subtitle" id="dir-cnt">–</div>
+        </div>
+        <button class="btn btn-teal btn-sm" onclick="openAddDir()">إضافة مدير</button>
+      </div>
+      <div id="dir-wrap"><div class="empty-state"><div class="spin-lg"></div></div></div>
     </div>
 
     <!-- المشرفون -->
