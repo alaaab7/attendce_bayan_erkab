@@ -1712,6 +1712,38 @@ async function loadAttTab(){
     attSnap.docs.forEach(d=>{ const data=d.data(); existingMap[attKey(data)]={docId:d.id,status:data.status,reason:data.reason||""}; });
     S.emps=allList.map(e=>{ const ex=existingMap[attKey(e)]; if(ex){e.existingDocId=ex.docId;e.existingStatus=ex.status;e.existingReason=ex.reason;} return e; });
 
+  } else if(role==="admin"){
+    // مدير النظام يحضّر الكل: موظفين + مشرفين + مدراء + نواب
+    const [empsSnap,supsSnap,attSnap]=await Promise.all([
+      db.collection("employees").get(),
+      db.collection("supervisors").get(),
+      db.collection("attendance").where("supervisor","==",username).where("date","==",today()).get()
+    ]);
+    const existingMap={};
+    attSnap.docs.forEach(d=>{ const data=d.data(); existingMap[attKey(data)]={docId:d.id,status:data.status,reason:data.reason||""}; });
+    const list=empsSnap.docs.map(d=>{
+      const e={id:d.id,...d.data(),_type:"employee"};
+      const ex=existingMap[attKey(e)];
+      if(ex){e.existingDocId=ex.docId;e.existingStatus=ex.status;e.existingReason=ex.reason;}
+      return e;
+    });
+    supsSnap.docs.forEach(d=>{
+      const data=d.data();
+      if(data.role==="admin") return; // استبعاد مدير النظام (نفسه وأي أدمن آخر)
+      const e={
+        id:d.id,
+        empId:data.username,
+        name:data.name,
+        dept:data.dept||"",
+        supervisor:data.username,
+        _type:data.role,
+        _roleLabel: data.role==="vice_admin"?"نائب مدير النظام":data.role==="director"?"مدير":"مشرف"
+      };
+      const ex=existingMap[attKey(e)];
+      if(ex){e.existingDocId=ex.docId;e.existingStatus=ex.status;e.existingReason=ex.reason;}
+      list.push(e);
+    });
+    S.emps=list;
   } else {
     let q=isAdminLike?db.collection("employees"):db.collection("employees").where("supervisor","==",username);
     const [empsSnap,attSnap]=await Promise.all([
@@ -1766,15 +1798,17 @@ function renderEmps(list){
         const recorded=!!e.existingDocId;
         const isSelf=!!e._isSelf;
         const isSup=e._type==="supervisor";
+        const isStaff=e._type && e._type!=="employee";
+        const roleLabel=e._roleLabel||(isSup?"مشرف":"");
         const rowStyle=isSelf?'style="background:linear-gradient(135deg,rgba(20,168,102,.06),rgba(13,110,62,.04));border-right:3px solid var(--blue2)"':'';
         return `
         <tr ${rowStyle}>
           <td><span class="row-num">${i+1}</span></td>
           <td>
             <div class="td-name">${isSelf?'<span style="font-size:10px;padding:2px 7px;background:var(--gold-light);color:var(--gold);border-radius:999px;margin-left:6px;font-weight:800">أنا</span>':''}${esc(e.name)}${recorded?'<span style="display:inline-block;margin-right:7px;padding:2px 8px;background:var(--green-bg);color:var(--green);border:1px solid rgba(21,128,61,.22);border-radius:999px;font-size:9.5px;font-weight:700;vertical-align:middle">مسجّل</span>':''}</div>
-            <div class="td-meta">${isSelf||isSup?"اسم المستخدم: "+esc(e.empId||"–"):"رقم الموظف: "+esc(e.empId||"–")}</div>
+            <div class="td-meta">${isSelf||isStaff?"اسم المستخدم: "+esc(e.empId||"–"):"رقم الموظف: "+esc(e.empId||"–")}</div>
           </td>
-          ${isAdminLike?`<td><span class="tag tag-blue">${esc(e.supervisor||"–")}</span></td>`:""}
+          ${isAdminLike?`<td>${isStaff?`<span class="tag tag-blue">${esc(roleLabel)}</span>`:`<span class="tag tag-blue">${esc(e.supervisor||"–")}</span>`}</td>`:""}
           ${isDirector?`<td><span class="tag ${isSup?"tag-blue":"tag-purple"}">${isSup?"مشرف":"موظف"}</span></td>`:""}
           <td><span class="tag tag-purple">${esc(e.dept||"–")}</span></td>
           <td>
