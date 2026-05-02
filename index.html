@@ -2305,14 +2305,20 @@ async function delSup(docId){
 // الموظفون
 async function loadEmpsTable(){
   document.getElementById("emps-wrap").innerHTML=`<div class="empty-state"><div class="spin-lg"></div></div>`;
-  const snap=await db.collection("employees").get();
-  S.allEmps=snap.docs.map(d=>({docId:d.id,...d.data()}));
+  const [empsSnap, leadersSnap]=await Promise.all([
+    db.collection("employees").get(),
+    db.collection("supervisors").where("role","in",["director","admin","vice_admin"]).get()
+  ]);
+  S.allEmps=empsSnap.docs.map(d=>({docId:d.id,...d.data()}));
+  // خريطة قادة (username → {name, role}) لعرض الدور الصحيح في الجدول
+  S.leadersMap={};
+  leadersSnap.docs.forEach(d=>{ const data=d.data(); S.leadersMap[data.username]={name:data.name,role:data.role}; });
   document.getElementById("emp-cnt").textContent=`${S.allEmps.length} موظف`;
   const supSel=document.getElementById("emp-filter-sup");
   // بناء خريطة من username إلى name
   const supMap={};
   S.sups.forEach(s=>{ supMap[s.username]=s.name||s.username; });
-  const uniqueSups=[...new Set(S.allEmps.map(e=>e.supervisor))];
+  const uniqueSups=[...new Set(S.allEmps.map(e=>e.supervisor).filter(Boolean))];
   supSel.innerHTML=`<option value="">جميع المشرفين</option>`+uniqueSups.map(u=>`<option value="${esc(u)}">${esc(supMap[u]||u)}</option>`).join("");
   renderEmpsTable(S.allEmps);
 }
@@ -2322,17 +2328,31 @@ function filterEmps(){
 }
 function renderEmpsTable(list){
   if(!list.length){ document.getElementById("emps-wrap").innerHTML=`<div class="empty-state"><div class="empty-state-title">لا يوجد موظفون</div></div>`; return; }
+  const leaders=S.leadersMap||{};
+  // ألوان وأسماء حسب دور المسؤول
+  const styleFor=role=>{
+    if(role==="admin")     return {bg:"var(--gold-light)",color:"var(--gold)",border:"rgba(4,120,87,.25)",label:"مدير النظام"};
+    if(role==="vice_admin")return {bg:"#ede9fe",         color:"#5b21b6",     border:"rgba(91,33,182,.22)",label:"نائب مدير النظام"};
+    return {bg:"#fef3c7",color:"#92400e",border:"rgba(180,83,9,.25)",label:"مدير"};
+  };
   document.getElementById("emps-wrap").innerHTML=`<div class="table-wrap"><table>
     <thead><tr><th>#</th><th>الموظف</th><th>رقم الموظف</th><th>القسم</th><th>المسؤول</th><th>الإجراءات</th></tr></thead>
     <tbody>${list.map((e,i)=>{
       const isDir=!e.supervisor && !!e.director;
-      const respHtml=isDir
-        ? `<span class="tag" style="background:#fef3c7;color:#92400e;border:1px solid rgba(180,83,9,.25)">مدير: ${esc(e.director)}</span>`
-        : `<span class="tag tag-blue">${esc(e.supervisor||"–")}</span>`;
+      let respHtml, badgeHtml="";
+      if(isDir){
+        const lr=leaders[e.director]||{};
+        const st=styleFor(lr.role||"director");
+        const dispName=lr.name||e.director;
+        respHtml=`<span class="tag" style="background:${st.bg};color:${st.color};border:1px solid ${st.border}">${st.label}: ${esc(dispName)}</span>`;
+        badgeHtml=`<span style="display:inline-block;margin-right:7px;padding:2px 7px;background:${st.bg};color:${st.color};border:1px solid ${st.border};border-radius:999px;font-size:9.5px;font-weight:700;vertical-align:middle">إدارة مباشرة</span>`;
+      } else {
+        respHtml=`<span class="tag tag-blue">${esc(e.supervisor||"–")}</span>`;
+      }
       return `
       <tr>
         <td><span class="row-num">${i+1}</span></td>
-        <td class="td-name">${esc(e.name)}${isDir?'<span style="display:inline-block;margin-right:7px;padding:2px 7px;background:#fef3c7;color:#92400e;border:1px solid rgba(180,83,9,.25);border-radius:999px;font-size:9.5px;font-weight:700;vertical-align:middle">إدارة مباشرة</span>':''}</td>
+        <td class="td-name">${esc(e.name)}${badgeHtml}</td>
         <td class="td-num">${esc(e.empId||"–")}</td>
         <td><span class="tag tag-purple">${esc(e.dept||"–")}</span></td>
         <td>${respHtml}</td>
@@ -2380,8 +2400,26 @@ async function populateSupSelect(selected=""){
   document.getElementById("me-sup").innerHTML=`<option value="">اختر المشرف</option>`+snap.docs.map(d=>{ const u=d.data().username; return `<option value="${esc(u)}" ${u===selected?"selected":""}>${esc(d.data().name)}</option>`; }).join("");
 }
 async function populateEmpDirSelect(selected=""){
-  const snap=await db.collection("supervisors").where("role","==","director").get();
-  document.getElementById("me-dir").innerHTML=`<option value="">اختر المدير</option>`+snap.docs.map(d=>{ const u=d.data().username; return `<option value="${esc(u)}" ${u===selected?"selected":""}>${esc(d.data().name)}</option>`; }).join("");
+  const snap=await db.collection("supervisors").where("role","in",["director","admin","vice_admin"]).get();
+  const groups={admin:[],vice_admin:[],director:[]};
+  snap.docs.forEach(d=>{ const data=d.data(); if(groups[data.role]) groups[data.role].push(data); });
+  let html='<option value="">اختر المسؤول</option>';
+  if(groups.admin.length){
+    html+='<optgroup label="مدير النظام">';
+    html+=groups.admin.map(d=>`<option value="${esc(d.username)}" ${d.username===selected?"selected":""}>${esc(d.name)}</option>`).join("");
+    html+='</optgroup>';
+  }
+  if(groups.vice_admin.length){
+    html+='<optgroup label="نائب مدير النظام">';
+    html+=groups.vice_admin.map(d=>`<option value="${esc(d.username)}" ${d.username===selected?"selected":""}>${esc(d.name)}</option>`).join("");
+    html+='</optgroup>';
+  }
+  if(groups.director.length){
+    html+='<optgroup label="المدراء">';
+    html+=groups.director.map(d=>`<option value="${esc(d.username)}" ${d.username===selected?"selected":""}>${esc(d.name)}</option>`).join("");
+    html+='</optgroup>';
+  }
+  document.getElementById("me-dir").innerHTML=html;
 }
 async function saveEmployee(){
   const name=document.getElementById("me-name").value.trim(), empId=document.getElementById("me-id").value.trim();
