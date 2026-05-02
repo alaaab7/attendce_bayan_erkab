@@ -1077,7 +1077,6 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
         <select class="fi" id="ms-role">
           <option value="supervisor">مشرف</option>
           <option value="admin">مدير النظام</option>
-          <option value="vice_admin">نائب مدير النظام</option>
         </select>
       </div>
       <div class="fg" style="grid-column:1/-1">
@@ -1136,7 +1135,13 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
       <div class="fg"><label class="fl">الاسم الكامل</label><input class="fi" type="text" id="md2-name" placeholder="مثال: خالد العمري"/></div>
       <div class="fg"><label class="fl">اسم المستخدم</label><input class="fi" type="text" id="md2-user" placeholder="مثال: khaledo"/></div>
       <div class="fg"><label class="fl">كلمة المرور</label><input class="fi" type="text" id="md2-pass" placeholder="كلمة المرور"/></div>
-      <div class="fg"><label class="fl">القسم</label>
+      <div class="fg"><label class="fl">المنصب</label>
+        <select class="fi" id="md2-role">
+          <option value="director">مدير</option>
+          <option value="vice_admin">نائب مدير النظام</option>
+        </select>
+      </div>
+      <div class="fg" style="grid-column:1/-1"><label class="fl">القسم</label>
         <select class="fi" id="md2-dept"><option value="">اختر القسم</option></select>
       </div>
     </div>
@@ -1179,6 +1184,31 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
     <div class="modal-footer">
       <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-dir-emp')">إلغاء</button>
       <button class="btn btn-green btn-sm" onclick="saveDirEmp()">حفظ البيانات</button>
+    </div>
+  </div>
+</div>
+
+<!-- نافذة تعديل حالة الحضور (سجل الحضور) -->
+<div class="modal-overlay" id="modal-edit-rec">
+  <div class="modal-box">
+    <div class="modal-title">تعديل حالة الحضور</div>
+    <div class="form-grid">
+      <div class="fg" style="grid-column:1/-1"><label class="fl">الموظف</label><input class="fi" type="text" id="erec-name" disabled style="background:var(--bg3);font-weight:700;color:var(--text)"/></div>
+      <div class="fg"><label class="fl">التاريخ</label><input class="fi" type="text" id="erec-date" disabled style="background:var(--bg3)"/></div>
+      <div class="fg"><label class="fl">القسم</label><input class="fi" type="text" id="erec-dept" disabled style="background:var(--bg3)"/></div>
+      <div class="fg" style="grid-column:1/-1"><label class="fl">الحالة</label>
+        <select class="fi" id="erec-status" onchange="onEditRecStatusChange()">
+          <option value="حاضر">حاضر</option>
+          <option value="غائب">غائب</option>
+          <option value="متأخر">متأخر</option>
+          <option value="مستأذن">مستأذن</option>
+        </select>
+      </div>
+      <div class="fg" id="erec-reason-wrap" style="grid-column:1/-1;display:none"><label class="fl">سبب الاستئذان</label><input class="fi" type="text" id="erec-reason" placeholder="أدخل سبب الاستئذان"/></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeModal('modal-edit-rec')">إلغاء</button>
+      <button class="btn btn-green btn-sm" onclick="saveRecEdit()">حفظ التعديل</button>
     </div>
   </div>
 </div>
@@ -1262,7 +1292,7 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
       <span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
       تسجيل الحضور
     </button>
-    <button class="tab ao" data-tab="t-rec" onclick="sw('t-rec')" style="display:none">
+    <button class="tab" data-tab="t-rec" onclick="sw('t-rec')">
       <span class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
       سجل الحضور
     </button>
@@ -1717,10 +1747,17 @@ async function loadAttTab(){
     const [empsSnap,supsSnap,attSnap]=await Promise.all([
       db.collection("employees").get(),
       db.collection("supervisors").get(),
-      db.collection("attendance").where("supervisor","==",username).where("date","==",today()).get()
+      db.collection("attendance").where("date","==",today()).get() // كل سجلات اليوم لمنع التكرار
     ]);
     const existingMap={};
-    attSnap.docs.forEach(d=>{ const data=d.data(); existingMap[attKey(data)]={docId:d.id,status:data.status,reason:data.reason||""}; });
+    attSnap.docs.forEach(d=>{
+      const data=d.data();
+      const k=attKey(data);
+      // الاحتفاظ بأحدث سجل إذا وُجدت تكرارات قديمة
+      if(!existingMap[k] || (data.dateTime||"")>(existingMap[k]._dt||"")){
+        existingMap[k]={docId:d.id,status:data.status,reason:data.reason||"",_dt:data.dateTime||""};
+      }
+    });
     const list=empsSnap.docs.map(d=>{
       const e={id:d.id,...d.data(),_type:"employee"};
       const ex=existingMap[attKey(e)];
@@ -1748,10 +1785,16 @@ async function loadAttTab(){
     let q=isAdminLike?db.collection("employees"):db.collection("employees").where("supervisor","==",username);
     const [empsSnap,attSnap]=await Promise.all([
       q.get(),
-      db.collection("attendance").where("supervisor","==",username).where("date","==",today()).get()
+      db.collection("attendance").where("date","==",today()).get() // كل سجلات اليوم لمنع التكرار
     ]);
     const existingMap={};
-    attSnap.docs.forEach(d=>{ const data=d.data(); existingMap[attKey(data)]={docId:d.id,status:data.status,reason:data.reason||""}; });
+    attSnap.docs.forEach(d=>{
+      const data=d.data();
+      const k=attKey(data);
+      if(!existingMap[k] || (data.dateTime||"")>(existingMap[k]._dt||"")){
+        existingMap[k]={docId:d.id,status:data.status,reason:data.reason||"",_dt:data.dateTime||""};
+      }
+    });
     let list=empsSnap.docs.map(d=>{ const e={id:d.id,...d.data(),_type:"employee"}; const ex=existingMap[attKey(e)]; if(ex){e.existingDocId=ex.docId;e.existingStatus=ex.status;e.existingReason=ex.reason;} return e; });
 
     // المشرف يضاف لنفسه في أعلى القائمة (نستخدم existingMap المحمّل مسبقاً)
@@ -1873,7 +1916,8 @@ async function submitAtt(){
         data.supervisor=username; data.supName=name;
       }
       if(e.existingDocId){
-        batch.update(db.collection(attCol).doc(e.existingDocId), data);
+        // استبدال كامل لتنظيف أي حقول قديمة من مسجّل سابق
+        batch.set(db.collection(attCol).doc(e.existingDocId), data);
         updated++;
       } else {
         batch.set(db.collection(attCol).doc(), data);
@@ -1893,8 +1937,47 @@ async function submitAtt(){
 // ── سجل الحضور ──
 async function loadRec(){
   document.getElementById("rec-wrap").innerHTML=`<div class="empty-state"><div class="spin-lg"></div></div>`;
-  const snap=await db.collection("attendance").orderBy("date","desc").get();
-  S.recs=snap.docs.map(d=>({docId:d.id,...d.data()}));
+  const role=S.user.role, username=S.user.username;
+  let recs=[];
+
+  if(role==="admin"||role==="vice_admin"){
+    // جميع السجلات (من أي مصدر)
+    const [attSnap,dirSnap]=await Promise.all([
+      db.collection("attendance").get(),
+      db.collection("director_attendance").get()
+    ]);
+    attSnap.docs.forEach(d=>recs.push({docId:d.id,_collection:"attendance",...d.data()}));
+    dirSnap.docs.forEach(d=>recs.push({docId:d.id,_collection:"director_attendance",...d.data()}));
+  } else if(role==="director"){
+    // سجلات المدير + سجلات مشرفيه
+    const dirSnap=await db.collection("director_attendance").where("director","==",username).get();
+    dirSnap.docs.forEach(d=>recs.push({docId:d.id,_collection:"director_attendance",...d.data()}));
+    const supsSnap=await db.collection("supervisors").where("director","==",username).where("role","==","supervisor").get();
+    const supUsernames=supsSnap.docs.map(d=>d.data().username);
+    if(supUsernames.length){
+      const chunks=[];
+      for(let i=0;i<supUsernames.length;i+=10) chunks.push(supUsernames.slice(i,i+10));
+      const snaps=await Promise.all(chunks.map(ch=>db.collection("attendance").where("supervisor","in",ch).get()));
+      snaps.forEach(snap=>snap.docs.forEach(d=>recs.push({docId:d.id,_collection:"attendance",...d.data()})));
+    }
+  } else if(role==="supervisor"){
+    // سجلات المشرف فقط
+    const snap=await db.collection("attendance").where("supervisor","==",username).get();
+    snap.docs.forEach(d=>recs.push({docId:d.id,_collection:"attendance",...d.data()}));
+  }
+
+  // إزالة التكرارات: شخص+يوم = سجل واحد فقط (الأحدث يفوز)
+  const dedupMap={};
+  recs.forEach(r=>{
+    const k=attKey(r)+"|"+(r.date||"");
+    const cur=dedupMap[k];
+    if(!cur || (r.dateTime||"")>(cur.dateTime||"")) dedupMap[k]=r;
+  });
+  recs=Object.values(dedupMap);
+  // ترتيب من الأحدث للأقدم
+  recs.sort((a,b)=>(b.dateTime||b.date||"").localeCompare(a.dateTime||a.date||""));
+  S.recs=recs;
+
   const depts=[...new Set(S.recs.map(r=>r.dept).filter(Boolean))];
   const df=document.getElementById("f-dept");
   df.innerHTML=`<option value="">جميع الأقسام</option>`+depts.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join("");
@@ -1907,8 +1990,10 @@ function renderRecs(list){
   const canDel=S.user.role==="admin"||S.user.role==="vice_admin";
   if(!list.length){ wrap.innerHTML=`<div class="empty-state"><div class="empty-state-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div class="empty-state-title">لا توجد سجلات</div><div class="empty-state-sub">جرّب تغيير معايير الفلترة</div></div>`; return; }
   wrap.innerHTML=`<div class="table-wrap"><table>
-    <thead><tr><th>#</th><th>الموظف</th><th>القسم</th><th>التاريخ والوقت</th><th>الحالة</th><th>سبب الاستئذان</th><th>المشرف</th>${canDel?"<th></th>":""}</tr></thead>
-    <tbody>${list.map((r,i)=>`
+    <thead><tr><th>#</th><th>الموظف</th><th>القسم</th><th>التاريخ والوقت</th><th>الحالة</th><th>سبب الاستئذان</th><th>سجّله</th><th>الإجراءات</th></tr></thead>
+    <tbody>${list.map((r,i)=>{
+      const recorder=r.supName||r.dirName||r.supervisor||r.director||"–";
+      return `
       <tr>
         <td><span class="row-num">${i+1}</span></td>
         <td><div class="td-name">${esc(r.name)}</div><div class="td-meta">${esc(r.empId||"")}</div></td>
@@ -1916,10 +2001,44 @@ function renderRecs(list){
         <td class="td-num">${esc(r.dateTime||r.date)}</td>
         <td><span class="status-badge ${sc(r.status)}">${esc(r.status)}</span></td>
         <td class="reason-cell" title="${esc(r.reason||"")}">${esc(r.reason||"–")}</td>
-        <td><span class="tag tag-blue">${esc(r.supName||r.supervisor)}</span></td>
-        ${canDel?`<td><button class="btn btn-xs" onclick="confirmDelRec('${r.docId}','${esc(r.name)}')" title="حذف هذا السجل" style="background:var(--red-bg);color:var(--red);border:1px solid rgba(220,38,38,.2);padding:5px 8px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button></td>`:""}
-      </tr>`).join("")}
+        <td><span class="tag tag-blue">${esc(recorder)}</span></td>
+        <td>
+          <button class="btn btn-ghost btn-xs" onclick="openEditRec('${r.docId}','${r._collection}')">تعديل الحالة</button>
+          ${canDel?`<button class="btn btn-red btn-xs" style="margin-right:5px" onclick="confirmDelRec('${r.docId}','${esc(r.name)}','${r._collection}')">حذف</button>`:""}
+        </td>
+      </tr>`;
+    }).join("")}
     </tbody></table></div>`;
+}
+
+// ── تعديل سجل الحضور ──
+function openEditRec(docId, collection){
+  const rec=S.recs.find(r=>r.docId===docId && r._collection===collection);
+  if(!rec){ toast("error","تعذر العثور على السجل"); return; }
+  S.editingRec=rec;
+  document.getElementById("erec-name").value=rec.name||"";
+  document.getElementById("erec-date").value=rec.dateTime||rec.date||"";
+  document.getElementById("erec-dept").value=rec.dept||"–";
+  document.getElementById("erec-status").value=rec.status||"حاضر";
+  document.getElementById("erec-reason").value=rec.reason||"";
+  onEditRecStatusChange();
+  document.getElementById("modal-edit-rec").classList.add("show");
+}
+function onEditRecStatusChange(){
+  const status=document.getElementById("erec-status").value;
+  document.getElementById("erec-reason-wrap").style.display=(status==="مستأذن")?"block":"none";
+}
+async function saveRecEdit(){
+  if(!S.editingRec){ closeModal("modal-edit-rec"); return; }
+  const status=document.getElementById("erec-status").value;
+  const reason=(status==="مستأذن")?document.getElementById("erec-reason").value.trim():"";
+  showOv("جارٍ حفظ التعديل");
+  try {
+    await db.collection(S.editingRec._collection).doc(S.editingRec.docId).update({status,reason});
+    hideOv(); closeModal("modal-edit-rec"); toast("success","تم تحديث حالة الحضور");
+    S.editingRec=null;
+    await loadRec();
+  } catch(e){ hideOv(); toast("error","فشل الحفظ: "+e.message); }
 }
 
 function filterRec(){
@@ -1929,18 +2048,19 @@ function filterRec(){
   document.getElementById("rec-cnt").textContent=`${f.length} من ${S.recs.length} سجل`;
 }
 
-function confirmDelRec(docId, empName){
-  showCfm('حذف سجل الحضور','هل أنت متأكد من حذف سجل حضور '+empName+'؟ سيتم أرشفته بشكل نهائي.',()=>delRec(docId));
+function confirmDelRec(docId, empName, collection){
+  showCfm('حذف سجل الحضور','هل أنت متأكد من حذف سجل حضور '+empName+'؟ سيتم أرشفته بشكل نهائي.',()=>delRec(docId, collection));
 }
 
-async function delRec(docId){
+async function delRec(docId, collection){
   closeCfm(); showOv("جارٍ الحذف");
+  const col=collection||"attendance";
   try {
-    const docRef=db.collection("attendance").doc(docId);
+    const docRef=db.collection(col).doc(docId);
     const snap=await docRef.get();
     if(snap.exists){
       const deletedAt=nowStr(), deletedBy=S.user.name||S.user.username;
-      await db.collection("archived_attendance").add({...snap.data(),deletedAt,deletedBy});
+      await db.collection("archived_attendance").add({...snap.data(),_source:col,deletedAt,deletedBy});
       await docRef.delete();
     }
     hideOv(); toast("success","تم حذف السجل وأرشفته"); loadRec();
@@ -2057,7 +2177,7 @@ async function delDept(docId){
 // المشرفون
 async function loadSupsTable(){
   document.getElementById("sup-wrap").innerHTML=`<div class="empty-state"><div class="spin-lg"></div></div>`;
-  const snap=await db.collection("supervisors").where("role","in",["supervisor","admin","vice_admin"]).get();
+  const snap=await db.collection("supervisors").where("role","in",["supervisor","admin"]).get();
   S.sups=snap.docs.map(d=>({docId:d.id,...d.data()}));
   document.getElementById("sup-cnt").textContent=`${S.sups.length} مشرف`;
   renderSupsTable(S.sups);
@@ -2290,34 +2410,46 @@ async function delMyEmp(docId){
 // ══════════════════════════════════════════
 async function loadDirsTable(){
   document.getElementById("dir-wrap").innerHTML=`<div class="empty-state"><div class="spin-lg"></div></div>`;
-  const snap=await db.collection("supervisors").where("role","==","director").get();
+  const snap=await db.collection("supervisors").where("role","in",["director","vice_admin"]).get();
   S.dirs=snap.docs.map(d=>({docId:d.id,...d.data()}));
-  document.getElementById("dir-cnt").textContent=`${S.dirs.length} مدير`;
+  const dirCount=S.dirs.filter(d=>d.role==="director").length;
+  const naibCount=S.dirs.filter(d=>d.role==="vice_admin").length;
+  document.getElementById("dir-cnt").textContent=naibCount?`${dirCount} مدير · ${naibCount} نائب`:`${dirCount} مدير`;
   updateDirSelects();
   if(!S.dirs.length){
-    document.getElementById("dir-wrap").innerHTML=`<div class="empty-state"><div class="empty-state-title">لم يتم إضافة أي مدير بعد</div><div class="empty-state-sub">أضف مديراً للبدء في تنظيم المشرفين</div></div>`;
+    document.getElementById("dir-wrap").innerHTML=`<div class="empty-state"><div class="empty-state-title">لم يتم إضافة أي مدير بعد</div><div class="empty-state-sub">أضف مديراً أو نائباً للبدء</div></div>`;
     return;
   }
+  const meRole=S.user.role;
   document.getElementById("dir-wrap").innerHTML=`<div class="table-wrap"><table>
-    <thead><tr><th>#</th><th>الاسم</th><th>اسم المستخدم</th><th>القسم</th><th>الإجراءات</th></tr></thead>
-    <tbody>${S.dirs.map((d,i)=>`
+    <thead><tr><th>#</th><th>الاسم</th><th>اسم المستخدم</th><th>القسم</th><th>المنصب</th><th>الإجراءات</th></tr></thead>
+    <tbody>${S.dirs.map((d,i)=>{
+      const isMe=d.docId===S.user.docId;
+      const blocked=meRole==="vice_admin" && d.role==="admin"; // (لا يحدث هنا لكن دفاعي)
+      let action;
+      if(isMe) action='<span class="td-num" style="color:var(--text3);font-size:11px">حسابك الحالي</span>';
+      else if(blocked) action='<span class="td-num" style="color:var(--text3);font-size:11px">محمي</span>';
+      else action='<button class="btn btn-red btn-xs" style="margin-right:5px" onclick="showCfm(\''+(d.role==="vice_admin"?"حذف النائب":"حذف المدير")+'\',\'سيتم حذف '+esc(d.name)+' بشكل نهائي.\',()=>delDir(\''+d.docId+'\'))">حذف</button>';
+      return `
       <tr>
         <td><span class="row-num">${i+1}</span></td>
         <td class="td-name">${esc(d.name)}</td>
         <td class="td-num">${esc(d.username)}</td>
         <td><span class="tag tag-purple">${esc(d.dept||"–")}</span></td>
+        <td><span class="perm-badge ${d.role}">${d.role==="vice_admin"?"نائب مدير النظام":"مدير"}</span></td>
         <td>
           <button class="btn btn-ghost btn-xs" onclick="openEditDir('${d.docId}')">تعديل</button>
-          ${d.docId===S.user.docId
-            ?'<span class="td-num" style="color:var(--text3);font-size:11px">حسابك الحالي</span>'
-            :'<button class="btn btn-red btn-xs" style="margin-right:5px" onclick="showCfm(\'حذف المدير\',\'سيتم حذف '+esc(d.name)+' بشكل نهائي.\',()=>delDir(\''+d.docId+'\'))">حذف</button>'}
+          ${action}
         </td>
-      </tr>`).join("")}
+      </tr>`;
+    }).join("")}
     </tbody></table></div>`;
 }
 
 function updateDirSelects(){
-  const opts=`<option value="">بدون مدير</option>`+S.dirs.map(d=>`<option value="${esc(d.username)}">${esc(d.name)}</option>`).join("");
+  // إظهار المدراء فقط في قائمة "المدير المسؤول" (النائب لا يُسند له مشرفون)
+  const dirsOnly=S.dirs.filter(d=>d.role==="director");
+  const opts=`<option value="">بدون مدير</option>`+dirsOnly.map(d=>`<option value="${esc(d.username)}">${esc(d.name)}</option>`).join("");
   const el=document.getElementById("ms-director");
   if(el) el.innerHTML=opts;
 }
@@ -2326,16 +2458,18 @@ function openAddDir(){
   editDirDocId=null;
   document.getElementById("modal-dir-title").textContent="إضافة مدير جديد";
   ["md2-name","md2-user","md2-pass"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("md2-role").value="director";
   updateDeptSelects();
   document.getElementById("modal-dir").classList.add("show");
 }
 function openEditDir(docId){
   const d=S.dirs.find(x=>x.docId===docId); if(!d) return;
   editDirDocId=docId;
-  document.getElementById("modal-dir-title").textContent="تعديل بيانات المدير";
+  document.getElementById("modal-dir-title").textContent="تعديل البيانات";
   document.getElementById("md2-name").value=d.name;
   document.getElementById("md2-user").value=d.username;
   document.getElementById("md2-pass").value=d.password;
+  document.getElementById("md2-role").value=d.role||"director";
   updateDeptSelects();
   document.getElementById("md2-dept").value=d.dept||"";
   document.getElementById("modal-dir").classList.add("show");
@@ -2345,20 +2479,25 @@ async function saveDirector(){
   const username=document.getElementById("md2-user").value.trim();
   const password=document.getElementById("md2-pass").value.trim();
   const dept=document.getElementById("md2-dept").value;
+  const role=document.getElementById("md2-role").value||"director";
   if(!name||!username||!password){ toast("error","يرجى تعبئة جميع الحقول الإلزامية"); return; }
   showOv("جارٍ الحفظ");
   try {
     editDirDocId
-      ? await db.collection("supervisors").doc(editDirDocId).update({name,username,password,dept,role:"director"})
-      : await db.collection("supervisors").add({name,username,password,dept,role:"director"});
-    hideOv(); closeModal("modal-dir"); toast("success","تم حفظ بيانات المدير");
+      ? await db.collection("supervisors").doc(editDirDocId).update({name,username,password,dept,role})
+      : await db.collection("supervisors").add({name,username,password,dept,role});
+    hideOv(); closeModal("modal-dir");
+    toast("success", role==="vice_admin"?"تم حفظ بيانات نائب المدير":"تم حفظ بيانات المدير");
     await loadDirsTable();
   } catch(e){ hideOv(); toast("error","فشل الحفظ: "+e.message); }
 }
 async function delDir(docId){
   closeCfm(); showOv("جارٍ الحذف");
+  const target=(S.dirs||[]).find(x=>x.docId===docId);
   await db.collection("supervisors").doc(docId).delete();
-  hideOv(); toast("success","تم حذف المدير"); loadDirsTable();
+  hideOv();
+  toast("success", target&&target.role==="vice_admin"?"تم حذف النائب":"تم حذف المدير");
+  loadDirsTable();
 }
 
 // ══════════════════════════════════════════
