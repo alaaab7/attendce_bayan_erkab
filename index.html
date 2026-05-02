@@ -1102,7 +1102,21 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
     <div class="form-grid">
       <div class="fg"><label class="fl">الاسم الكامل</label><input class="fi" type="text" id="me-name" placeholder="مثال: أحمد الرشيدي"/></div>
       <div class="fg"><label class="fl">رقم الموظف</label><input class="fi" type="text" id="me-id" placeholder="مثال: 1001"/></div>
-      <div class="fg"><label class="fl">المشرف المسؤول</label><select class="fi" id="me-sup"></select></div>
+      <div class="fg" style="grid-column:1/-1">
+        <label class="fl">نوع الإسناد</label>
+        <div style="display:flex;gap:10px">
+          <label style="flex:1;display:flex;align-items:center;gap:8px;padding:11px 14px;background:var(--bg3);border:1.5px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-weight:600;font-size:13px">
+            <input type="radio" name="me-atype" value="supervisor" checked onchange="onEmpAssignChange()" style="width:16px;height:16px;accent-color:var(--blue2);cursor:pointer"/>
+            <span>تحت مشرف</span>
+          </label>
+          <label style="flex:1;display:flex;align-items:center;gap:8px;padding:11px 14px;background:var(--bg3);border:1.5px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-weight:600;font-size:13px">
+            <input type="radio" name="me-atype" value="director" onchange="onEmpAssignChange()" style="width:16px;height:16px;accent-color:var(--blue2);cursor:pointer"/>
+            <span>تحت إدارة مباشرة</span>
+          </label>
+        </div>
+      </div>
+      <div class="fg" id="me-sup-wrap"><label class="fl">المشرف المسؤول</label><select class="fi" id="me-sup"></select></div>
+      <div class="fg" id="me-dir-wrap" style="display:none"><label class="fl">المدير المسؤول</label><select class="fi" id="me-dir"></select></div>
       <div class="fg"><label class="fl">القسم</label><select class="fi" id="me-dept"><option value="">اختر القسم</option></select></div>
     </div>
     <div class="modal-footer">
@@ -1722,10 +1736,15 @@ async function loadAttTab(){
   if(filterBar) filterBar.style.display=isAdminLike?"flex":"none";
 
   if(role==="director"){
-    // جلب المشرفين التابعين للمدير
-    const supsSnap=await db.collection("supervisors").where("director","==",username).where("role","==","supervisor").get();
+    // جلب المشرفين التابعين للمدير + الموظفين المباشرين
+    const [supsSnap, directEmpsSnap] = await Promise.all([
+      db.collection("supervisors").where("director","==",username).where("role","==","supervisor").get(),
+      db.collection("employees").where("director","==",username).get()
+    ]);
     const supsList=supsSnap.docs.map(d=>({id:d.id,...d.data(),empId:d.data().username,_type:"supervisor"}));
-    // جلب موظفي هؤلاء المشرفين
+    // موظفون مباشرون تحت المدير (بدون مشرف)
+    const directEmps=directEmpsSnap.docs.map(d=>({id:d.id,...d.data(),_type:"employee"}));
+    // جلب موظفي المشرفين
     let empsList=[];
     if(supsList.length){
       const supUsernames=supsList.map(s=>s.username);
@@ -1735,7 +1754,7 @@ async function loadAttTab(){
       const empsSnaps=await Promise.all(chunks.map(ch=>db.collection("employees").where("supervisor","in",ch).get()));
       empsSnaps.forEach(snap=>snap.docs.forEach(d=>empsList.push({id:d.id,...d.data(),_type:"employee"})));
     }
-    const allList=[...supsList,...empsList];
+    const allList=[...supsList,...directEmps,...empsList];
     // جلب حضور اليوم من director_attendance
     const attSnap=await db.collection("director_attendance").where("director","==",username).where("date","==",today()).get();
     const existingMap={};
@@ -1819,10 +1838,28 @@ function renderEmps(list){
     return;
   }
   const cls={حاضر:"present",غائب:"absent",متأخر:"late",مستأذن:"excuse"};
+
+  // إخفاء المسجّلين اليوم (يظهرون مرة أخرى بكره — أو يُعدّلون من سجل الحضور)
   const recordedCount=list.filter(e=>e.existingDocId).length;
-  const newCount=list.length-recordedCount;
+  const pending=[];
+  list.forEach((e,i)=>{ if(!e.existingDocId) pending.push({item:e, origIdx:i}); });
+
+  // الكل مسجّل → حالة "اكتمل"
+  if(!pending.length){
+    wrap.innerHTML=`<div class="empty-state" style="background:linear-gradient(135deg,var(--green-bg),var(--sky));border:1px dashed rgba(21,128,61,.3);border-radius:var(--radius);padding:48px 24px">
+      <div class="empty-state-icon" style="background:linear-gradient(135deg,var(--green),var(--blue2));border:none;box-shadow:0 10px 24px rgba(21,128,61,.25)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <div class="empty-state-title" style="color:var(--green);font-size:17px">تم تسجيل حضور الجميع لهذا اليوم</div>
+      <div class="empty-state-sub" style="margin-top:8px">إجمالي ${recordedCount} مسجّل · للتعديل افتح تبويب "سجل الحضور"</div>
+    </div>`;
+    return;
+  }
+
+  const banner=recordedCount?`<div style="margin-bottom:14px;padding:10px 14px;background:var(--green-bg);border:1px solid rgba(21,128,61,.2);border-radius:var(--radius-sm);font-size:12.5px;color:var(--green);font-weight:600;display:flex;align-items:center;gap:8px"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px rgba(21,128,61,.5)"></span>تم تسجيل ${recordedCount} اليوم · ${pending.length} لم يُسجّل بعد — للتعديل افتح "سجل الحضور"</div>`:"";
+
   wrap.innerHTML=`
-    ${recordedCount?`<div style="margin-bottom:14px;padding:10px 14px;background:var(--green-bg);border:1px solid rgba(21,128,61,.2);border-radius:var(--radius-sm);font-size:12.5px;color:var(--green);font-weight:600;display:flex;align-items:center;gap:8px"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px rgba(21,128,61,.5)"></span>تم تسجيل ${recordedCount} اليوم${newCount?` · ${newCount} لم يُسجّل بعد`:""} — يمكنك التعديل وحفظ التغييرات</div>`:""}
+    ${banner}
     <div class="table-wrap"><table>
       <thead><tr>
         <th style="width:40px">#</th>
@@ -1833,12 +1870,11 @@ function renderEmps(list){
         <th>الحالة</th>
         <th>سبب الاستئذان</th>
       </tr></thead>
-      <tbody>${list.map((e,i)=>{
-        const idx=e._idx!==undefined?e._idx:i;
+      <tbody>${pending.map(({item:e, origIdx}, displayIdx)=>{
+        const idx=e._idx!==undefined?e._idx:origIdx;
         const cur=e.existingStatus||"حاضر";
         const cc=cls[cur]||"present";
         const isEx=cur==="مستأذن";
-        const recorded=!!e.existingDocId;
         const isSelf=!!e._isSelf;
         const isSup=e._type==="supervisor";
         const isStaff=e._type && e._type!=="employee";
@@ -1846,9 +1882,9 @@ function renderEmps(list){
         const rowStyle=isSelf?'style="background:linear-gradient(135deg,rgba(20,168,102,.06),rgba(13,110,62,.04));border-right:3px solid var(--blue2)"':'';
         return `
         <tr ${rowStyle}>
-          <td><span class="row-num">${i+1}</span></td>
+          <td><span class="row-num">${displayIdx+1}</span></td>
           <td>
-            <div class="td-name">${isSelf?'<span style="font-size:10px;padding:2px 7px;background:var(--gold-light);color:var(--gold);border-radius:999px;margin-left:6px;font-weight:800">أنا</span>':''}${esc(e.name)}${recorded?'<span style="display:inline-block;margin-right:7px;padding:2px 8px;background:var(--green-bg);color:var(--green);border:1px solid rgba(21,128,61,.22);border-radius:999px;font-size:9.5px;font-weight:700;vertical-align:middle">مسجّل</span>':''}</div>
+            <div class="td-name">${isSelf?'<span style="font-size:10px;padding:2px 7px;background:var(--gold-light);color:var(--gold);border-radius:999px;margin-left:6px;font-weight:800">أنا</span>':''}${esc(e.name)}</div>
             <div class="td-meta">${isSelf||isStaff?"اسم المستخدم: "+esc(e.empId||"–"):"رقم الموظف: "+esc(e.empId||"–")}</div>
           </td>
           ${isAdminLike?`<td>${isStaff?`<span class="tag tag-blue">${esc(roleLabel)}</span>`:`<span class="tag tag-blue">${esc(e.supervisor||"–")}</span>`}</td>`:""}
@@ -1871,7 +1907,7 @@ function renderEmps(list){
       }).join("")}
       </tbody>
     </table></div>
-    <div class="row-count">إجمالي: ${list.length}</div>`;
+    <div class="row-count">${pending.length} يحتاج تسجيل · ${list.length} إجمالي</div>`;
 }
 
 function filterAttList(){
@@ -1903,9 +1939,10 @@ async function submitAtt(){
     let added=0, updated=0;
     S.emps.forEach((e,i)=>{
       const selEl=document.getElementById(`sl-${i}`);
-      const status=selEl?selEl.value:(e.existingStatus||"حاضر");
+      if(!selEl) return; // تخطّي المخفيين (تم تسجيلهم سابقاً اليوم)
+      const status=selEl.value;
       const exvEl=document.getElementById(`exv-${i}`);
-      const reason=status==="مستأذن"?(exvEl?exvEl.value.trim():(e.existingReason||"")):"";
+      const reason=status==="مستأذن"?(exvEl?exvEl.value.trim():""):"";
       const empIdVal=e.empId||e.username||e.id;
       let data={empId:empIdVal,name:e.name,dept:e.dept||"",date:today(),dateTime:nowStr(),status,reason};
       if(role==="director"){
@@ -2286,27 +2323,41 @@ function filterEmps(){
 function renderEmpsTable(list){
   if(!list.length){ document.getElementById("emps-wrap").innerHTML=`<div class="empty-state"><div class="empty-state-title">لا يوجد موظفون</div></div>`; return; }
   document.getElementById("emps-wrap").innerHTML=`<div class="table-wrap"><table>
-    <thead><tr><th>#</th><th>الموظف</th><th>رقم الموظف</th><th>القسم</th><th>المشرف</th><th>الإجراءات</th></tr></thead>
-    <tbody>${list.map((e,i)=>`
+    <thead><tr><th>#</th><th>الموظف</th><th>رقم الموظف</th><th>القسم</th><th>المسؤول</th><th>الإجراءات</th></tr></thead>
+    <tbody>${list.map((e,i)=>{
+      const isDir=!e.supervisor && !!e.director;
+      const respHtml=isDir
+        ? `<span class="tag" style="background:#fef3c7;color:#92400e;border:1px solid rgba(180,83,9,.25)">مدير: ${esc(e.director)}</span>`
+        : `<span class="tag tag-blue">${esc(e.supervisor||"–")}</span>`;
+      return `
       <tr>
         <td><span class="row-num">${i+1}</span></td>
-        <td class="td-name">${esc(e.name)}</td>
+        <td class="td-name">${esc(e.name)}${isDir?'<span style="display:inline-block;margin-right:7px;padding:2px 7px;background:#fef3c7;color:#92400e;border:1px solid rgba(180,83,9,.25);border-radius:999px;font-size:9.5px;font-weight:700;vertical-align:middle">إدارة مباشرة</span>':''}</td>
         <td class="td-num">${esc(e.empId||"–")}</td>
         <td><span class="tag tag-purple">${esc(e.dept||"–")}</span></td>
-        <td><span class="tag tag-blue">${esc(e.supervisor)}</span></td>
+        <td>${respHtml}</td>
         <td>
           <button class="btn btn-ghost btn-xs" onclick="openEditEmp('${e.docId}')">تعديل</button>
           <button class="btn btn-red btn-xs" style="margin-right:5px" onclick="showCfm('حذف الموظف','سيتم حذف ${esc(e.name)} بشكل نهائي.',()=>delEmp('${e.docId}'))">حذف</button>
         </td>
-      </tr>`).join("")}
+      </tr>`;
+    }).join("")}
     </tbody></table></div>
   <div class="row-count">إجمالي: ${list.length} موظف</div>`;
+}
+function onEmpAssignChange(){
+  const t=document.querySelector('input[name="me-atype"]:checked')?.value||"supervisor";
+  document.getElementById("me-sup-wrap").style.display=(t==="supervisor")?"block":"none";
+  document.getElementById("me-dir-wrap").style.display=(t==="director")?"block":"none";
 }
 async function openAddEmp(){
   editEmpDocId=null;
   document.getElementById("modal-emp-title").textContent="إضافة موظف جديد";
   document.getElementById("me-name").value=""; document.getElementById("me-id").value="";
-  await populateSupSelect(); updateDeptSelects();
+  document.querySelector('input[name="me-atype"][value="supervisor"]').checked=true;
+  await Promise.all([populateSupSelect(), populateEmpDirSelect()]);
+  updateDeptSelects();
+  onEmpAssignChange();
   document.getElementById("modal-emp").classList.add("show");
 }
 async function openEditEmp(docId){
@@ -2314,20 +2365,40 @@ async function openEditEmp(docId){
   editEmpDocId=docId;
   document.getElementById("modal-emp-title").textContent="تعديل بيانات الموظف";
   document.getElementById("me-name").value=e.name; document.getElementById("me-id").value=e.empId||"";
-  await populateSupSelect(e.supervisor); updateDeptSelects(); document.getElementById("me-dept").value=e.dept||"";
+  const isDir=!e.supervisor && !!e.director;
+  document.querySelector(`input[name="me-atype"][value="${isDir?"director":"supervisor"}"]`).checked=true;
+  await Promise.all([
+    populateSupSelect(isDir?"":(e.supervisor||"")),
+    populateEmpDirSelect(isDir?(e.director||""):"")
+  ]);
+  updateDeptSelects(); document.getElementById("me-dept").value=e.dept||"";
+  onEmpAssignChange();
   document.getElementById("modal-emp").classList.add("show");
 }
 async function populateSupSelect(selected=""){
   const snap=await db.collection("supervisors").where("role","==","supervisor").get();
-  document.getElementById("me-sup").innerHTML=snap.docs.map(d=>{ const u=d.data().username; return `<option value="${esc(u)}" ${u===selected?"selected":""}>${esc(d.data().name)}</option>`; }).join("");
+  document.getElementById("me-sup").innerHTML=`<option value="">اختر المشرف</option>`+snap.docs.map(d=>{ const u=d.data().username; return `<option value="${esc(u)}" ${u===selected?"selected":""}>${esc(d.data().name)}</option>`; }).join("");
+}
+async function populateEmpDirSelect(selected=""){
+  const snap=await db.collection("supervisors").where("role","==","director").get();
+  document.getElementById("me-dir").innerHTML=`<option value="">اختر المدير</option>`+snap.docs.map(d=>{ const u=d.data().username; return `<option value="${esc(u)}" ${u===selected?"selected":""}>${esc(d.data().name)}</option>`; }).join("");
 }
 async function saveEmployee(){
   const name=document.getElementById("me-name").value.trim(), empId=document.getElementById("me-id").value.trim();
-  const supervisor=document.getElementById("me-sup").value, dept=document.getElementById("me-dept").value;
-  if(!name||!supervisor){ toast("error","يرجى إدخال الاسم واختيار المشرف"); return; }
+  const dept=document.getElementById("me-dept").value;
+  const aType=document.querySelector('input[name="me-atype"]:checked')?.value||"supervisor";
+  let supervisor="", director="";
+  if(aType==="supervisor"){
+    supervisor=document.getElementById("me-sup").value;
+    if(!name||!supervisor){ toast("error","يرجى إدخال الاسم واختيار المشرف"); return; }
+  } else {
+    director=document.getElementById("me-dir").value;
+    if(!name||!director){ toast("error","يرجى إدخال الاسم واختيار المدير"); return; }
+  }
   showOv("جارٍ الحفظ");
   try {
-    editEmpDocId ? await db.collection("employees").doc(editEmpDocId).update({name,empId,supervisor,dept}) : await db.collection("employees").add({name,empId,supervisor,dept});
+    const data={name,empId,supervisor,director,dept};
+    editEmpDocId ? await db.collection("employees").doc(editEmpDocId).update(data) : await db.collection("employees").add(data);
     hideOv(); closeModal("modal-emp"); toast("success","تم حفظ بيانات الموظف");
     S.emps=[];
     await loadEmpsTable();
@@ -2676,6 +2747,10 @@ async function loadDirMgrEmps(){
     S.dirMgrSups=snap.docs.map(d=>({docId:d.id,...d.data()}));
   }
   let empsList=[];
+  // موظفون مباشرون تحت المدير
+  const directSnap=await db.collection("employees").where("director","==",S.user.username).get();
+  directSnap.docs.forEach(d=>empsList.push({docId:d.id,...d.data()}));
+  // موظفون تحت مشرفي المدير
   if(S.dirMgrSups.length){
     const supUsernames=S.dirMgrSups.map(s=>s.username);
     const chunks=[];
