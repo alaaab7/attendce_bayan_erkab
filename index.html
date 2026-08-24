@@ -12,8 +12,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&family=Tajawal:wght@400;500;700;800;900&family=Reem+Kufi:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 /* ═══════════════════════════════════════════
@@ -1564,18 +1562,104 @@ tbody td { padding: 14px 16px; font-size: 13px; vertical-align: middle; }
 
 <script>
 // ══════════════════════════════════════════
-//  إعدادات Firebase
+//  عميل قاعدة البيانات (REST API على الخادم)
+//  يحاكي واجهة Firestore ليعمل مع بقية الشيفرة دون تغيير
 // ══════════════════════════════════════════
-const firebaseConfig = {
-  apiKey:            "AIzaSyBU-83B0PS7u_IoQKR4d_5wBSNaBJzOWVo",
-  authDomain:        "bayan-alarkab.firebaseapp.com",
-  projectId:         "bayan-alarkab",
-  storageBucket:     "bayan-alarkab.firebasestorage.app",
-  messagingSenderId: "852184767043",
-  appId:             "1:852184767043:web:e66f7e8ce66f1d5cf252f6"
+const API_BASE = "/api/collections";
+
+async function _req(url, opts){
+  const res = await fetch(url, opts);
+  if(!res.ok){
+    let msg = res.statusText || ("HTTP "+res.status);
+    try { const j = await res.json(); if(j && j.error) msg = j.error; } catch(_){}
+    throw new Error(msg);
+  }
+  return res;
+}
+
+function _genId(){
+  const a="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let s=""; for(let i=0;i<20;i++) s+=a[Math.floor(Math.random()*a.length)];
+  return s;
+}
+
+class _DocSnapshot {
+  constructor(id, data){ this.id = id; this._data = data; this.exists = data !== null && data !== undefined; }
+  data(){ return this._data ? {...this._data} : null; }
+}
+
+class _QuerySnapshot {
+  constructor(docs){ this.docs = docs; this.empty = docs.length === 0; }
+}
+
+class _DocRef {
+  constructor(collection, id){ this.collection = collection; this.id = id; this._new = !id; if(!this.id) this.id = _genId(); }
+  async get(){
+    try {
+      const res = await _req(`${API_BASE}/${encodeURIComponent(this.collection)}/${encodeURIComponent(this.id)}`);
+      const d = await res.json();
+      const {id, ...rest} = d;
+      return new _DocSnapshot(id, rest);
+    } catch(e){
+      if(String(e.message).toLowerCase().includes("not found")) return new _DocSnapshot(this.id, null);
+      throw e;
+    }
+  }
+  async set(data){
+    await _req(`${API_BASE}/${encodeURIComponent(this.collection)}/${encodeURIComponent(this.id)}`, {
+      method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(data||{})
+    });
+  }
+  async update(data){
+    await _req(`${API_BASE}/${encodeURIComponent(this.collection)}/${encodeURIComponent(this.id)}`, {
+      method:"PATCH", headers:{"Content-Type":"application/json"}, body: JSON.stringify(data||{})
+    });
+  }
+  async delete(){
+    await _req(`${API_BASE}/${encodeURIComponent(this.collection)}/${encodeURIComponent(this.id)}`, { method:"DELETE" });
+  }
+}
+
+class _Query {
+  constructor(collection, filters){ this.collection = collection; this._filters = filters || []; }
+  where(field, op, value){ return new _Query(this.collection, [...this._filters, {field, op, value}]); }
+  async get(){
+    const qs = this._filters.length ? ("?filters="+encodeURIComponent(JSON.stringify(this._filters))) : "";
+    const res = await _req(`${API_BASE}/${encodeURIComponent(this.collection)}${qs}`);
+    const arr = await res.json();
+    const docs = arr.map(d => { const {id, ...rest} = d; return new _DocSnapshot(id, rest); });
+    return new _QuerySnapshot(docs);
+  }
+}
+
+class _CollectionRef extends _Query {
+  constructor(name){ super(name, []); }
+  doc(id){ return new _DocRef(this.collection, id || null); }
+  async add(data){
+    const res = await _req(`${API_BASE}/${encodeURIComponent(this.collection)}`, {
+      method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(data||{})
+    });
+    const j = await res.json();
+    return new _DocRef(this.collection, j.id);
+  }
+}
+
+class _Batch {
+  constructor(){ this._ops = []; }
+  set(docRef, data){ this._ops.push({op:"set", collection:docRef.collection, id:docRef.id, data}); return this; }
+  update(docRef, data){ this._ops.push({op:"update", collection:docRef.collection, id:docRef.id, data}); return this; }
+  delete(docRef){ this._ops.push({op:"delete", collection:docRef.collection, id:docRef.id}); return this; }
+  async commit(){
+    await _req(`/api/batch`, {
+      method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(this._ops)
+    });
+  }
+}
+
+const db = {
+  collection(name){ return new _CollectionRef(name); },
+  batch(){ return new _Batch(); }
 };
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
 
 const S = { user:null, emps:[], recs:[], sups:[], allEmps:[], depts:[], dirs:[], dirRecs:[], mySups:[], dirMgrSups:[], dirMgrEmps:[] };
 let editSupDocId=null, editEmpDocId=null, editDeptDocId=null, editDirDocId=null, editDirSupDocId=null, editDirEmpDocId=null;
